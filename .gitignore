@@ -1,0 +1,16 @@
+# Google Cloud credentials
+*.json
+
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+
+# User-specific
+*.xcuserstate
+*.xcuserdatad/
+
+# macOS
+.DS_Store
+
+# Screenshots (optional - remove if you want to include them)
+screenshots/
