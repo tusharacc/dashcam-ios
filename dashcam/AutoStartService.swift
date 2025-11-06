@@ -163,9 +163,10 @@ extension AutoStartService {
             try audioSession.setCategory(
                 .playAndRecord,
                 mode: .videoRecording,
-                options: [.allowBluetoothHFP, .allowBluetoothA2DP]
+                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .mixWithOthers]
             )
             try audioSession.setActive(true)
+            print("✅ Audio session configured to mix with Spotify/music apps")
         } catch {
             print("❌ Failed to configure audio session for background recording: \(error)")
         }
