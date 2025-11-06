@@ -14,6 +14,7 @@ class CloudStorageService: ObservableObject {
 
     @Published var uploadProgress: [URL: Double] = [:]
     @Published var isOnline = false
+    @Published var uploadedFiles: Set<String> = [] // Track which files are in cloud
 
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
@@ -27,15 +28,30 @@ class CloudStorageService: ObservableObject {
     private var accessToken: String = ""
     private var tokenExpiry: Date = Date()
 
+    // Track uploaded files persistently
+    private let uploadedFilesKey = "UploadedFiles"
+
     private init() {
         // Load configuration synchronously (fast operations)
         loadStoredBucketName()
+        loadUploadedFiles()
 
         // Defer heavy operations to avoid blocking startup but ensure self remains strong
         DispatchQueue.global(qos: .utility).async {
             self.loadStoredServiceAccount()
             self.startNetworkMonitoring()
         }
+    }
+
+    private func loadUploadedFiles() {
+        if let storedFiles = UserDefaults.standard.array(forKey: uploadedFilesKey) as? [String] {
+            uploadedFiles = Set(storedFiles)
+            print("📂 Loaded \(uploadedFiles.count) uploaded file records")
+        }
+    }
+
+    private func saveUploadedFiles() {
+        UserDefaults.standard.set(Array(uploadedFiles), forKey: uploadedFilesKey)
     }
 
     private func loadStoredServiceAccount() {
@@ -91,11 +107,24 @@ class CloudStorageService: ObservableObject {
         print("🌐 Network status: \(isOnline ? "Online" : "Offline")")
         print("📋 Upload queue length: \(uploadQueue.count)")
 
+        // Log to ObservabilityService so it appears in app log viewer
+        ObservabilityService.shared.info("CloudUpload", "Video queued for upload", metadata: [
+            "file": fileURL.lastPathComponent,
+            "cloud_path": cloudPath,
+            "network_status": isOnline ? "Online" : "Offline",
+            "queue_length": String(uploadQueue.count),
+            "priority": String(priority.rawValue)
+        ])
+
         if isOnline {
             print("🔄 Processing upload queue...")
+            ObservabilityService.shared.info("CloudUpload", "Processing upload queue (online)")
             processUploadQueue()
         } else {
             print("⏳ Waiting for network connectivity...")
+            ObservabilityService.shared.warning("CloudUpload", "Waiting for network - upload queued", metadata: [
+                "queued_videos": String(uploadQueue.count)
+            ])
         }
     }
 
@@ -172,6 +201,16 @@ class CloudStorageService: ObservableObject {
                     if success {
                         print("✅ Upload completed: \(task.fileURL.lastPathComponent)")
 
+                        // Mark file as uploaded
+                        self.uploadedFiles.insert(task.fileURL.lastPathComponent)
+                        self.saveUploadedFiles()
+
+                        // Log successful upload
+                        ObservabilityService.shared.info("CloudUpload", "Upload successful", metadata: [
+                            "file": task.fileURL.lastPathComponent,
+                            "cloud_path": task.cloudPath
+                        ])
+
                         // Track successful upload
                         if let fileSize = self.getFileSize(task.fileURL) {
                             GoogleCloudMonitoring.shared.trackVideoUploaded(fileSize: fileSize)
@@ -181,6 +220,7 @@ class CloudStorageService: ObservableObject {
                         if task.priority != .emergency {
                             try? FileManager.default.removeItem(at: task.fileURL)
                             print("🗑️ Deleted local file after upload: \(task.fileURL.lastPathComponent)")
+                            ObservabilityService.shared.info("CloudUpload", "Local file deleted after upload")
                         }
 
                         // Clean up compressed file if it's different from original
@@ -189,6 +229,12 @@ class CloudStorageService: ObservableObject {
                         }
                     } else {
                         print("ℹ️ Upload not available - video saved locally: \(task.fileURL.lastPathComponent)")
+
+                        // Log upload failure
+                        ObservabilityService.shared.warning("CloudUpload", "Upload failed - video saved locally", metadata: [
+                            "file": task.fileURL.lastPathComponent,
+                            "reason": "Authentication or network error"
+                        ])
 
                         // Track upload failure
                         GoogleCloudMonitoring.shared.trackUploadFailure(error: "Authentication or network error")
@@ -289,6 +335,7 @@ class CloudStorageService: ObservableObject {
     private func refreshAccessToken() async -> Bool {
         guard !serviceAccountKey.isEmpty else {
             print("⚠️ Service account key not configured")
+            ObservabilityService.shared.warning("CloudUpload", "Service account key not configured - uploads disabled")
             return false
         }
 
@@ -301,13 +348,16 @@ class CloudStorageService: ObservableObject {
             }
 
             print("✅ Access token refreshed")
+            ObservabilityService.shared.info("CloudUpload", "Access token refreshed successfully")
             return true
 
         } catch GoogleCloudAuth.AuthError.notImplemented {
             print("ℹ️ Google Cloud upload not implemented - videos stored locally")
+            ObservabilityService.shared.warning("CloudUpload", "Google Cloud upload not implemented - videos stored locally")
             return false
         } catch {
             print("❌ Failed to refresh access token: \(error.localizedDescription)")
+            ObservabilityService.shared.error("CloudUpload", "Failed to refresh access token", error: error)
             return false
         }
     }
@@ -454,5 +504,81 @@ class CloudStorageService: ObservableObject {
 
     private func getFileSize(_ url: URL) -> Int64? {
         return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize.map(Int64.init)
+    }
+
+    // MARK: - Cloud Status Checking
+
+    /// Check if a file has been uploaded to cloud
+    func isFileInCloud(_ fileURL: URL) -> Bool {
+        return uploadedFiles.contains(fileURL.lastPathComponent)
+    }
+
+    /// Get all local video files
+    func getAllLocalVideos() -> [URL] {
+        let tempDirectory = FileManager.default.temporaryDirectory
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: tempDirectory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: .skipsHiddenFiles
+        ) else {
+            return []
+        }
+
+        return files
+            .filter { $0.pathExtension == "mov" && $0.lastPathComponent.hasPrefix("dashcam_") }
+            .sorted { url1, url2 in
+                let date1 = (try? url1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date.distantPast
+                let date2 = (try? url2.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date.distantPast
+                return date1 > date2 // Newest first
+            }
+    }
+
+    /// Get videos that are only stored locally (not in cloud)
+    func getLocalOnlyVideos() -> [URL] {
+        return getAllLocalVideos().filter { !isFileInCloud($0) }
+    }
+
+    /// Get count of videos in different states
+    func getVideoStats() -> (total: Int, inCloud: Int, localOnly: Int, uploading: Int) {
+        let allVideos = getAllLocalVideos()
+        let total = allVideos.count
+        let inCloud = allVideos.filter { isFileInCloud($0) }.count
+        let localOnly = allVideos.filter { !isFileInCloud($0) }.count
+        let uploading = uploadProgress.count
+
+        return (total, inCloud, localOnly, uploading)
+    }
+
+    /// Manually queue specific videos for upload
+    func manuallyUploadVideos(_ fileURLs: [URL]) {
+        ObservabilityService.shared.info("CloudUpload", "Manual upload requested", metadata: [
+            "count": String(fileURLs.count)
+        ])
+
+        for fileURL in fileURLs {
+            // Skip if already in cloud
+            if isFileInCloud(fileURL) {
+                print("⏭️ Skipping already uploaded file: \(fileURL.lastPathComponent)")
+                continue
+            }
+
+            // Skip if already in upload queue
+            if uploadQueue.contains(where: { $0.fileURL == fileURL }) {
+                print("⏭️ File already in upload queue: \(fileURL.lastPathComponent)")
+                continue
+            }
+
+            // Queue for upload with normal priority
+            queueForUpload(fileURL, priority: .normal)
+        }
+    }
+
+    /// Manually upload all local-only videos
+    func uploadAllLocalVideos() {
+        let localOnlyVideos = getLocalOnlyVideos()
+        ObservabilityService.shared.info("CloudUpload", "Upload all local videos", metadata: [
+            "count": String(localOnlyVideos.count)
+        ])
+        manuallyUploadVideos(localOnlyVideos)
     }
 }

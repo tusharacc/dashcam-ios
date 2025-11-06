@@ -406,34 +406,79 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(recordings, id: \.self) { url in
+                    VStack(spacing: 0) {
+                        // Upload status header
                         HStack {
-                            Image(systemName: "video.fill")
-                                .foregroundColor(.blue)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(url.lastPathComponent)
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-
-                                Text(formatFileDate(url))
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            }
+                            let stats = CloudStorageService.shared.getVideoStats()
+                            Text("\(stats.localOnly) videos need upload")
+                                .font(.caption)
+                                .foregroundColor(stats.localOnly > 0 ? .orange : .green)
 
                             Spacer()
 
-                            Text(formatFileSize(url))
-                                .font(.caption2)
-                                .foregroundColor(.gray)
+                            if stats.localOnly > 0 {
+                                Button(action: {
+                                    CloudStorageService.shared.uploadAllLocalVideos()
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "icloud.and.arrow.up")
+                                        Text("Upload All")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue)
+                                    .cornerRadius(4)
+                                }
+                            }
                         }
-                        .padding(.vertical, 4)
-                        .listRowBackground(Color.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.gray.opacity(0.2))
+
+                        List(recordings, id: \.self) { url in
+                            HStack {
+                                // Cloud status indicator
+                                Image(systemName: CloudStorageService.shared.isFileInCloud(url) ? "icloud.fill" : "iphone")
+                                    .foregroundColor(CloudStorageService.shared.isFileInCloud(url) ? .green : .orange)
+                                    .frame(width: 20)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(url.lastPathComponent)
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+
+                                    HStack(spacing: 4) {
+                                        Text(formatFileDate(url))
+                                            .font(.caption2)
+                                            .foregroundColor(.gray)
+
+                                        if CloudStorageService.shared.isFileInCloud(url) {
+                                            Text("• Cloud")
+                                                .font(.caption2)
+                                                .foregroundColor(.green)
+                                        } else {
+                                            Text("• Local")
+                                                .font(.caption2)
+                                                .foregroundColor(.orange)
+                                        }
+                                    }
+                                }
+
+                                Spacer()
+
+                                Text(formatFileSize(url))
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            }
+                            .padding(.vertical, 4)
+                            .listRowBackground(Color.black)
+                        }
+                        .listStyle(PlainListStyle())
+                        .background(Color.black)
                     }
-                    .listStyle(PlainListStyle())
-                    .background(Color.black)
                 }
             }
             .onAppear { fetchRecordings() }
