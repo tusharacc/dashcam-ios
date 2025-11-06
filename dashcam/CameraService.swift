@@ -19,6 +19,7 @@ import AVFoundation
 import UIKit
 import CoreLocation
 import CoreMotion
+import MediaPlayer
 
 /// Singleton service managing camera recording, orientation, and motion detection.
 ///
@@ -84,6 +85,51 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
             name: UIDevice.orientationDidChangeNotification,
             object: nil
         )
+
+        // Setup lock screen controls
+        setupLockScreenControls()
+    }
+
+    // MARK: - Lock Screen Controls
+    private func setupLockScreenControls() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        // Handle pause command (stop recording)
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] event in
+            print("🔒 Lock screen pause button tapped")
+            self?.stopRecording()
+            return .success
+        }
+
+        // Handle play command (start recording)
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] event in
+            print("🔒 Lock screen play button tapped")
+            self?.startRecording()
+            return .success
+        }
+
+        print("✅ Lock screen controls configured")
+    }
+
+    private func updateNowPlayingInfo(isRecording: Bool) {
+        let nowPlayingInfoCenter = MPNowPlayingInfoCenter.default()
+
+        if isRecording {
+            var nowPlayingInfo = [String: Any]()
+            nowPlayingInfo[MPMediaItemPropertyTitle] = "Dashcam Recording"
+            nowPlayingInfo[MPMediaItemPropertyArtist] = "Active"
+            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = segmentDuration
+
+            nowPlayingInfoCenter.nowPlayingInfo = nowPlayingInfo
+            print("🔒 Lock screen info updated: Recording active")
+        } else {
+            nowPlayingInfoCenter.nowPlayingInfo = nil
+            print("🔒 Lock screen info cleared: Recording stopped")
+        }
     }
 
     private func setupSession() {
@@ -210,6 +256,11 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
             let fileURL = self.makeOutputURL()
             self.movieOutput.startRecording(to: fileURL, recordingDelegate: self)
             print("Started recording to: \(fileURL)")
+
+            // Update lock screen controls
+            DispatchQueue.main.async {
+                self.updateNowPlayingInfo(isRecording: true)
+            }
         }
     }
 
@@ -219,6 +270,11 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
                 self.movieOutput.stopRecording()
             }
             self.stopLoopRecording()
+
+            // Update lock screen controls
+            DispatchQueue.main.async {
+                self.updateNowPlayingInfo(isRecording: false)
+            }
         }
     }
 
@@ -226,6 +282,11 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
         isLoopRecording = true
         currentSegmentNumber = 0
         startNextSegment()
+
+        // Update lock screen controls
+        DispatchQueue.main.async {
+            self.updateNowPlayingInfo(isRecording: true)
+        }
     }
 
     func stopLoopRecording() {
@@ -234,6 +295,11 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
         segmentTimer = nil
         if movieOutput.isRecording {
             movieOutput.stopRecording()
+        }
+
+        // Update lock screen controls
+        DispatchQueue.main.async {
+            self.updateNowPlayingInfo(isRecording: false)
         }
     }
 
