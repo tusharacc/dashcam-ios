@@ -444,11 +444,30 @@ class CloudStorageService: ObservableObject {
 
     func testAuthentication() async -> Bool {
         print("🧪 Testing Google Cloud authentication...")
+        ObservabilityService.shared.info("CloudAuth", "Starting authentication test")
+
+        // Check service account key exists
+        if serviceAccountKey.isEmpty {
+            let errorMsg = "Service account key is empty"
+            print("❌ \(errorMsg)")
+            ObservabilityService.shared.error("CloudAuth", errorMsg)
+            return false
+        }
+
+        print("🧪 Service account key loaded: \(serviceAccountKey.count) characters")
+        ObservabilityService.shared.info("CloudAuth", "Service account key found", metadata: [
+            "key_length": String(serviceAccountKey.count)
+        ])
+
         let authSuccess = await refreshAccessToken()
 
         if authSuccess {
             print("🧪 Authentication successful, now testing bucket access...")
+            ObservabilityService.shared.info("CloudAuth", "Authentication successful, testing bucket access")
             return await testBucketAccess()
+        } else {
+            print("❌ Authentication failed")
+            ObservabilityService.shared.error("CloudAuth", "Authentication failed - check logs for details")
         }
 
         return false
@@ -459,9 +478,14 @@ class CloudStorageService: ObservableObject {
         let testURL = "https://storage.googleapis.com/storage/v1/b/\(bucketName)"
 
         print("🧪 Testing bucket access: \(testURL)")
+        ObservabilityService.shared.info("CloudAuth", "Testing bucket access", metadata: [
+            "bucket": bucketName,
+            "url": testURL
+        ])
 
         guard let url = URL(string: testURL) else {
             print("❌ Invalid test URL")
+            ObservabilityService.shared.error("CloudAuth", "Invalid bucket test URL")
             return false
         }
 
@@ -477,26 +501,41 @@ class CloudStorageService: ObservableObject {
 
                 if httpResponse.statusCode == 200 {
                     print("✅ Bucket '\(bucketName)' exists and is accessible")
+                    ObservabilityService.shared.info("CloudAuth", "Bucket test successful", metadata: [
+                        "bucket": bucketName
+                    ])
                     return true
                 } else if httpResponse.statusCode == 404 {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
                     print("❌ Bucket '\(bucketName)' does not exist")
-                    if let responseString = String(data: data, encoding: .utf8) {
-                        print("❌ Response: \(responseString)")
-                    }
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Bucket does not exist", metadata: [
+                        "bucket": bucketName,
+                        "status": "404",
+                        "response": responseString
+                    ])
                 } else if httpResponse.statusCode == 403 {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
                     print("❌ Access denied to bucket '\(bucketName)'")
-                    if let responseString = String(data: data, encoding: .utf8) {
-                        print("❌ Response: \(responseString)")
-                    }
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Access denied to bucket - service account needs Storage Object Viewer role", metadata: [
+                        "bucket": bucketName,
+                        "status": "403",
+                        "response": responseString
+                    ])
                 } else {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
                     print("❌ Unexpected response: \(httpResponse.statusCode)")
-                    if let responseString = String(data: data, encoding: .utf8) {
-                        print("❌ Response: \(responseString)")
-                    }
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Unexpected bucket test response", metadata: [
+                        "status": String(httpResponse.statusCode),
+                        "response": responseString
+                    ])
                 }
             }
         } catch {
             print("❌ Bucket test error: \(error)")
+            ObservabilityService.shared.error("CloudAuth", "Bucket test network error", error: error)
         }
 
         return false

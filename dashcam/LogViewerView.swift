@@ -16,6 +16,8 @@ struct LogViewerView: View {
     @State private var isLoading = false
     @State private var showingExportSheet = false
     @State private var exportURL: URL?
+    @State private var showExportError = false
+    @State private var exportErrorMessage = ""
 
     private let observability = ObservabilityService.shared
     private let logLevels = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -142,6 +144,11 @@ struct LogViewerView: View {
                     ActivityViewController(activityItems: [exportURL])
                 }
             }
+            .alert("Export Failed", isPresented: $showExportError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(exportErrorMessage)
+            }
         }
     }
 
@@ -176,13 +183,23 @@ struct LogViewerView: View {
     }
 
     private func exportLogs() {
+        print("🔵 Export button tapped")
         observability.info("LogViewer", "Exporting logs")
 
         DispatchQueue.global(qos: .userInitiated).async {
+            print("🔵 Calling observability.exportLogs()")
             if let exportURL = observability.exportLogs() {
+                print("✅ Export successful: \(exportURL)")
                 DispatchQueue.main.async {
                     self.exportURL = exportURL
                     self.showingExportSheet = true
+                    print("✅ Showing export sheet")
+                }
+            } else {
+                print("❌ Export failed - exportURL is nil")
+                DispatchQueue.main.async {
+                    self.exportErrorMessage = "Failed to export logs. No log files found."
+                    self.showExportError = true
                 }
             }
         }

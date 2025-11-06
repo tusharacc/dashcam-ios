@@ -376,25 +376,47 @@ class ObservabilityService: ObservableObject {
     }
 
     func exportLogs() -> URL? {
+        print("🔵 [Export] Starting log export from: \(localLogDirectory.path)")
+
         let exportFile = localLogDirectory.appendingPathComponent("exported_logs_\(Date().timeIntervalSince1970).txt")
+        print("🔵 [Export] Export file path: \(exportFile.path)")
 
         var allLogs = ""
 
         // Get all log files
-        if let files = try? FileManager.default.contentsOfDirectory(at: localLogDirectory, includingPropertiesForKeys: nil) {
+        do {
+            let files = try FileManager.default.contentsOfDirectory(at: localLogDirectory, includingPropertiesForKeys: nil)
+            print("🔵 [Export] Found \(files.count) files in log directory")
+
             let logFiles = files.filter { $0.pathExtension == "log" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            print("🔵 [Export] Found \(logFiles.count) .log files")
+
+            if logFiles.isEmpty {
+                print("❌ [Export] No log files found!")
+                return nil
+            }
 
             for file in logFiles {
+                print("🔵 [Export] Reading file: \(file.lastPathComponent)")
                 if let content = try? String(contentsOf: file, encoding: .utf8) {
                     allLogs += "=== \(file.lastPathComponent) ===\n"
                     allLogs += content
                     allLogs += "\n\n"
+                    print("✅ [Export] Added \(content.count) characters from \(file.lastPathComponent)")
+                } else {
+                    print("❌ [Export] Failed to read: \(file.lastPathComponent)")
                 }
             }
-        }
 
-        try? allLogs.write(to: exportFile, atomically: true, encoding: .utf8)
-        return exportFile
+            print("🔵 [Export] Total log content: \(allLogs.count) characters")
+            try allLogs.write(to: exportFile, atomically: true, encoding: .utf8)
+            print("✅ [Export] Successfully wrote export file")
+            return exportFile
+
+        } catch {
+            print("❌ [Export] Error: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     deinit {

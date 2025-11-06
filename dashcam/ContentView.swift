@@ -31,6 +31,10 @@ struct ContentView: View {
     @State private var isCarConnected = false
     @State private var isVoiceListening = false
 
+    // MARK: - Upload State
+    @State private var showUploadAlert = false
+    @State private var uploadMessage = ""
+
     // MARK: - Orientation State
     /// Efficient orientation tracking - only changes when orientation actually changes
     @State private var isLandscape = false
@@ -70,6 +74,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
+        }
+        .alert("Upload Started", isPresented: $showUploadAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(uploadMessage)
         }
     }
 
@@ -418,7 +427,17 @@ struct ContentView: View {
 
                             if stats.localOnly > 0 {
                                 Button(action: {
+                                    print("🔵 Upload All button tapped - queuing \(stats.localOnly) videos")
                                     CloudStorageService.shared.uploadAllLocalVideos()
+
+                                    // Show feedback alert
+                                    uploadMessage = "Queued \(stats.localOnly) video(s) for upload. Check logs for details."
+                                    showUploadAlert = true
+
+                                    // Refresh recordings list
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        fetchRecordings()
+                                    }
                                 }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "icloud.and.arrow.up")
