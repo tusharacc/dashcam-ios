@@ -462,9 +462,11 @@ class CloudStorageService: ObservableObject {
         let authSuccess = await refreshAccessToken()
 
         if authSuccess {
-            print("🧪 Authentication successful, now testing bucket access...")
-            ObservabilityService.shared.info("CloudAuth", "Authentication successful, testing bucket access")
-            return await testBucketAccess()
+            print("🧪 Authentication successful, now testing upload capability...")
+            ObservabilityService.shared.info("CloudAuth", "Authentication successful, testing upload capability")
+
+            // Try actual upload test instead of bucket metadata check
+            return await testUploadCapability()
         } else {
             print("❌ Authentication failed")
             ObservabilityService.shared.error("CloudAuth", "Authentication failed - check logs for details")
@@ -473,8 +475,95 @@ class CloudStorageService: ObservableObject {
         return false
     }
 
+    private func testUploadCapability() async -> Bool {
+        // Test upload capability by uploading a small test file
+        // This is a more accurate test than checking bucket metadata
+        print("🧪 Testing upload capability with a test file...")
+        ObservabilityService.shared.info("CloudAuth", "Testing upload capability")
+
+        // Create a small test file
+        let testContent = "Dashcam connection test - \(Date())\nBucket: \(bucketName)\nProject: \(projectId)"
+        guard let testData = testContent.data(using: .utf8) else {
+            print("❌ Failed to create test data")
+            ObservabilityService.shared.error("CloudAuth", "Failed to create test data")
+            return false
+        }
+
+        let testPath = "test/connection_test_\(Date().timeIntervalSince1970).txt"
+        let encodedPath = testPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? testPath
+        let uploadURL = "https://storage.googleapis.com/upload/storage/v1/b/\(bucketName)/o?uploadType=media&name=\(encodedPath)"
+
+        print("🧪 Test upload URL: \(uploadURL)")
+        ObservabilityService.shared.info("CloudAuth", "Uploading test file", metadata: [
+            "bucket": bucketName,
+            "path": testPath
+        ])
+
+        guard let url = URL(string: uploadURL) else {
+            print("❌ Invalid test upload URL")
+            ObservabilityService.shared.error("CloudAuth", "Invalid test upload URL")
+            return false
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let (data, response) = try await URLSession.shared.upload(for: request, from: testData)
+
+            if let httpResponse = response as? HTTPURLResponse {
+                print("🧪 Test upload response: \(httpResponse.statusCode)")
+
+                if httpResponse.statusCode == 200 {
+                    print("✅ Upload test successful - service account has correct permissions")
+                    ObservabilityService.shared.info("CloudAuth", "Upload test successful", metadata: [
+                        "bucket": bucketName,
+                        "test_file": testPath
+                    ])
+                    return true
+                } else if httpResponse.statusCode == 404 {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
+                    print("❌ Bucket '\(bucketName)' does not exist")
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Bucket does not exist", metadata: [
+                        "bucket": bucketName,
+                        "status": "404",
+                        "response": responseString
+                    ])
+                } else if httpResponse.statusCode == 403 {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
+                    print("❌ Access denied - service account needs Storage Object Creator permission")
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Access denied - service account needs Storage Object Admin role", metadata: [
+                        "bucket": bucketName,
+                        "status": "403",
+                        "response": responseString
+                    ])
+                } else {
+                    let responseString = String(data: data, encoding: .utf8) ?? "No response"
+                    print("❌ Upload test failed with status: \(httpResponse.statusCode)")
+                    print("❌ Response: \(responseString)")
+                    ObservabilityService.shared.log(.error, category: "CloudAuth", message: "Upload test failed", metadata: [
+                        "status": String(httpResponse.statusCode),
+                        "response": responseString,
+                        "bucket": bucketName
+                    ])
+                }
+            }
+        } catch {
+            print("❌ Upload test error: \(error)")
+            ObservabilityService.shared.error("CloudAuth", "Upload test network error", error: error)
+        }
+
+        return false
+    }
+
+    // Old bucket access test - kept for reference but not used
     private func testBucketAccess() async -> Bool {
-        // Test bucket access by trying to list objects (or get bucket metadata)
+        // This test requires storage.buckets.get permission which is not needed for uploads
+        // Replaced with testUploadCapability() which tests what we actually need
         let testURL = "https://storage.googleapis.com/storage/v1/b/\(bucketName)"
 
         print("🧪 Testing bucket access: \(testURL)")
