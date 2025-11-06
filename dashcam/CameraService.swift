@@ -201,6 +201,16 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
             session.addOutput(movieOutput)
             print("✅ Movie output added successfully")
 
+            // Configure movie output
+            // IMPORTANT: Do NOT set movieFragmentInterval - it can cause issues with video processing
+            // Keep movie fragments DISABLED for standard MOV files that work with all tools
+            movieOutput.movieFragmentInterval = .invalid
+            print("✅ Movie fragmentation DISABLED for compatibility")
+
+            // No maxRecordedDuration limit - we'll handle segmentation manually with timer
+            // No maxRecordedFileSize limit - we'll handle storage cleanup manually
+            print("✅ No automatic recording duration/size limits")
+
             // Set initial video orientation
             if let connection = movieOutput.connection(with: .video) {
                 if connection.isVideoOrientationSupported {
@@ -456,22 +466,36 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
                     error: Error?) {
         if let error = error {
             print("❌ Recording error: \(error.localizedDescription)")
+            print("❌ Error details: \(error)")
             ObservabilityService.shared.error("Recording", "Recording failed", error: error)
             GoogleCloudMonitoring.shared.trackUploadFailure(error: error.localizedDescription)
         } else {
             print("✅ Recording finished. Saved to: \(outputFileURL)")
 
-            // Calculate recording duration
-            if let fileSize = getFileSize(outputFileURL) {
-                // Estimate duration based on file size (rough approximation)
-                let estimatedDuration = Double(fileSize) / (1024 * 1024 * 2) // Assuming ~2MB per minute
-                ObservabilityService.shared.info("Recording", "Recording completed", metadata: [
-                    "file_size": String(fileSize),
-                    "estimated_duration": String(estimatedDuration * 60),
-                    "file_path": outputFileURL.lastPathComponent
-                ])
-                GoogleCloudMonitoring.shared.trackVideoRecorded(duration: estimatedDuration * 60)
+            // Get ACTUAL video duration from the file
+            let actualDuration = getActualVideoDuration(outputFileURL)
+            let fileSize = getFileSize(outputFileURL) ?? 0
+
+            print("📹 Video details:")
+            print("   - File: \(outputFileURL.lastPathComponent)")
+            print("   - Size: \(Double(fileSize) / (1024 * 1024)) MB")
+            print("   - Duration: \(actualDuration) seconds (\(actualDuration / 60) minutes)")
+            print("   - Expected: \(segmentDuration) seconds")
+
+            if actualDuration < segmentDuration / 2 {
+                print("⚠️ WARNING: Video is much shorter than expected!")
+                print("   Expected: \(segmentDuration)s, Got: \(actualDuration)s")
             }
+
+            // Log with actual duration
+            ObservabilityService.shared.info("Recording", "Recording completed", metadata: [
+                "file_size": String(fileSize),
+                "actual_duration": String(actualDuration),
+                "expected_duration": String(segmentDuration),
+                "file_path": outputFileURL.lastPathComponent,
+                "is_short": String(actualDuration < segmentDuration / 2)
+            ])
+            GoogleCloudMonitoring.shared.trackVideoRecorded(duration: actualDuration)
 
             // Queue for cloud upload
             CloudStorageService.shared.queueForUpload(outputFileURL)
@@ -553,6 +577,19 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
 
     private func getCreationDate(_ url: URL) -> Date {
         return (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+    }
+
+    private func getActualVideoDuration(_ url: URL) -> Double {
+        let asset = AVAsset(url: url)
+        let duration = asset.duration
+        let durationInSeconds = CMTimeGetSeconds(duration)
+
+        if durationInSeconds.isNaN || durationInSeconds.isInfinite {
+            print("⚠️ Warning: Video duration is invalid (NaN or infinite)")
+            return 0
+        }
+
+        return durationInSeconds
     }
 
     // MARK: - Helper
