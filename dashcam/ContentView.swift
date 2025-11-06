@@ -396,7 +396,7 @@ struct ContentView: View {
                         .padding(.horizontal)
                 }
                 .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.2))
+                .background(Color(red: 0.15, green: 0.15, blue: 0.15))
 
                 if recordings.isEmpty {
                     VStack(spacing: 16) {
@@ -414,6 +414,7 @@ struct ContentView: View {
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
                 } else {
                     VStack(spacing: 0) {
                         // Upload status header
@@ -454,7 +455,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color.gray.opacity(0.2))
+                        .background(Color(red: 0.15, green: 0.15, blue: 0.15))
 
                         List(recordings, id: \.self) { url in
                             HStack {
@@ -500,6 +501,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .background(Color.black)
             .onAppear { fetchRecordings() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 fetchRecordings()
