@@ -71,6 +71,13 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
     // MARK: - Setup
     private override init() {
         super.init()
+
+        // Setup lock screen controls immediately
+        setupLockScreenControls()
+
+        // Configure audio session for lock screen controls to work
+        configureAudioSessionForLockScreen()
+
         // Defer heavy initialization to avoid blocking app startup but ensure self remains strong
         DispatchQueue.global(qos: .utility).async {
             self.setupSession()
@@ -85,9 +92,21 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
             name: UIDevice.orientationDidChangeNotification,
             object: nil
         )
+    }
 
-        // Setup lock screen controls
-        setupLockScreenControls()
+    private func configureAudioSessionForLockScreen() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .videoRecording,
+                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .mixWithOthers]
+            )
+            try audioSession.setActive(true)
+            print("✅ Audio session activated for lock screen controls")
+        } catch {
+            print("❌ Failed to configure audio session: \(error)")
+        }
     }
 
     // MARK: - Lock Screen Controls
@@ -110,25 +129,60 @@ class CameraService: NSObject, AVCaptureFileOutputRecordingDelegate {
             return .success
         }
 
-        print("✅ Lock screen controls configured")
+        // Handle toggle play/pause command
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in
+            print("🔒 Lock screen toggle play/pause tapped")
+            if self?.movieOutput.isRecording == true {
+                self?.stopRecording()
+            } else {
+                self?.startRecording()
+            }
+            return .success
+        }
+
+        print("✅ Lock screen controls configured (play, pause, toggle)")
     }
 
     private func updateNowPlayingInfo(isRecording: Bool) {
         let nowPlayingInfoCenter = MPNowPlayingInfoCenter.default()
+        let commandCenter = MPRemoteCommandCenter.shared()
 
         if isRecording {
+            // Set now playing info
             var nowPlayingInfo = [String: Any]()
             nowPlayingInfo[MPMediaItemPropertyTitle] = "Dashcam Recording"
-            nowPlayingInfo[MPMediaItemPropertyArtist] = "Active"
+            nowPlayingInfo[MPMediaItemPropertyArtist] = "Tap pause to stop"
+            nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = "Dashcam"
             nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
             nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = segmentDuration
 
             nowPlayingInfoCenter.nowPlayingInfo = nowPlayingInfo
+
+            // Enable commands
+            commandCenter.pauseCommand.isEnabled = true
+            commandCenter.playCommand.isEnabled = false
+            commandCenter.togglePlayPauseCommand.isEnabled = true
+
             print("🔒 Lock screen info updated: Recording active")
+            print("🔒 Pause command enabled, play command disabled")
         } else {
-            nowPlayingInfoCenter.nowPlayingInfo = nil
-            print("🔒 Lock screen info cleared: Recording stopped")
+            // Update info to show stopped state
+            var nowPlayingInfo = [String: Any]()
+            nowPlayingInfo[MPMediaItemPropertyTitle] = "Dashcam"
+            nowPlayingInfo[MPMediaItemPropertyArtist] = "Tap play to record"
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+
+            nowPlayingInfoCenter.nowPlayingInfo = nowPlayingInfo
+
+            // Enable play, disable pause
+            commandCenter.playCommand.isEnabled = true
+            commandCenter.pauseCommand.isEnabled = false
+            commandCenter.togglePlayPauseCommand.isEnabled = true
+
+            print("🔒 Lock screen info updated: Recording stopped")
+            print("🔒 Play command enabled, pause command disabled")
         }
     }
 
